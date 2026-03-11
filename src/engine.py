@@ -264,7 +264,9 @@ class OpenAIvLLMEngine(vLLMEngine):
         self.completion_engine = OpenAIServingCompletion(**completion_kwargs)
 
         if hasattr(self.chat_engine, 'warmup'):
-            await self.chat_engine.warmup()
+            result = self.chat_engine.warmup()
+            if inspect.isawaitable(result):
+                await result
 
     async def generate(self, openai_request: JobInput):
         await self._ensure_engines_initialized()
