@@ -40,8 +40,11 @@ Or deploy via GitHub repo on RunPod (Serverless > New Endpoint > GitHub Repo).
 | **GPU** | 48GB (A6000 or L40S) |
 | `MODEL_NAME` | `Qwen/Qwen3.5-35B-A3B-GPTQ-Int4` |
 | `QUANTIZATION` | `gptq` |
-| `MAX_MODEL_LEN` | `32768` |
+| `MAX_MODEL_LEN` | `131072` |
 | `GPU_MEMORY_UTILIZATION` | `0.92` |
+| `MAX_NUM_SEQS` | `5` |
+| `ENABLE_PREFIX_CACHING` | `true` |
+| `GUIDED_DECODING_BACKEND` | `guidance` |
 | `TRUST_REMOTE_CODE` | `true` |
 | `DISABLE_LOG_STATS` | `true` |
 
