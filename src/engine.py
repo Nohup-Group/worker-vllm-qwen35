@@ -18,6 +18,7 @@ from vllm.entrypoints.openai.models.serving import OpenAIServingModels
 
 from constants import DEFAULT_BATCH_SIZE, DEFAULT_BATCH_SIZE_GROWTH_FACTOR, DEFAULT_MAX_CONCURRENCY, DEFAULT_MIN_BATCH_SIZE
 from engine_args import get_engine_args
+from observability import capture_exception, start_span
 from tokenizer import TokenizerWrapper
 from utils import BatchSize, DummyRequest, JobInput, create_error_response
 
@@ -97,6 +98,7 @@ class vLLMEngine:
             ):
                 yield batch
         except Exception as e:
+            capture_exception(e)
             yield {"error": create_error_response(str(e)).model_dump()}
 
     async def _generate_vllm(self, llm_input, validated_sampling_params, batch_size, stream, apply_chat_template, request_id, batch_size_growth_factor, min_batch_size: str) -> AsyncGenerator[dict, None]:
@@ -115,32 +117,33 @@ class vLLMEngine:
         batch_size_growth_factor, min_batch_size = batch_size_growth_factor or self.batch_size_growth_factor, min_batch_size or self.min_batch_size
         batch_size = BatchSize(max_batch_size, min_batch_size, batch_size_growth_factor)
 
-        async for request_output in results_generator:
-            if is_first_output:
-                n_input_tokens = len(request_output.prompt_token_ids)
-                is_first_output = False
+        with start_span(op="vllm.generate", description=self.engine_args.model):
+            async for request_output in results_generator:
+                if is_first_output:
+                    n_input_tokens = len(request_output.prompt_token_ids)
+                    is_first_output = False
 
-            for output in request_output.outputs:
-                output_index = output.index
-                token_counters["total"] += 1
-                if stream:
-                    new_output = output.text[len(last_output_texts[output_index]):]
-                    batch["choices"][output_index]["tokens"].append(new_output)
-                    token_counters["batch"] += 1
+                for output in request_output.outputs:
+                    output_index = output.index
+                    token_counters["total"] += 1
+                    if stream:
+                        new_output = output.text[len(last_output_texts[output_index]):]
+                        batch["choices"][output_index]["tokens"].append(new_output)
+                        token_counters["batch"] += 1
 
-                    if token_counters["batch"] >= batch_size.current_batch_size:
-                        batch["usage"] = {
-                            "input": n_input_tokens,
-                            "output": token_counters["total"],
-                        }
-                        yield batch
-                        batch = {
-                            "choices": [{"tokens": []} for _ in range(n_responses)],
-                        }
-                        token_counters["batch"] = 0
-                        batch_size.update()
+                        if token_counters["batch"] >= batch_size.current_batch_size:
+                            batch["usage"] = {
+                                "input": n_input_tokens,
+                                "output": token_counters["total"],
+                            }
+                            yield batch
+                            batch = {
+                                "choices": [{"tokens": []} for _ in range(n_responses)],
+                            }
+                            token_counters["batch"] = 0
+                            batch_size.update()
 
-                last_output_texts[output_index] = output.text
+                    last_output_texts[output_index] = output.text
 
         if not stream:
             for output_index, output in enumerate(last_output_texts):
@@ -154,7 +157,8 @@ class vLLMEngine:
     def _initialize_llm(self):
         try:
             start = time.time()
-            engine = AsyncLLMEngine.from_engine_args(self.engine_args)
+            with start_span(op="startup.vllm_init", description=self.engine_args.model):
+                engine = AsyncLLMEngine.from_engine_args(self.engine_args)
             end = time.time()
             logging.info(f"Initialized vLLM engine in {end - start:.2f}s")
             return engine
@@ -203,7 +207,8 @@ class OpenAIvLLMEngine(vLLMEngine):
     async def _ensure_engines_initialized(self):
         if not self._engines_initialized:
             logging.info("Initializing OpenAI serving engines...")
-            await self._initialize_engines()
+            with start_span(op="startup.openai_init", description=self.served_model_name):
+                await self._initialize_engines()
             self._engines_initialized = True
             logging.info("OpenAI serving engines initialized successfully")
 
@@ -287,33 +292,34 @@ class OpenAIvLLMEngine(vLLMEngine):
             return
 
         dummy_request = DummyRequest()
-        response_generator = await generator_function(request, raw_request=dummy_request)
+        with start_span(op="openai.generate", description=openai_request.openai_route):
+            response_generator = await generator_function(request, raw_request=dummy_request)
 
-        if not openai_request.openai_input.get("stream") or isinstance(response_generator, ErrorResponse):
-            yield response_generator.model_dump()
-        else:
-            batch = []
-            batch_token_counter = 0
-            batch_size = BatchSize(self.default_batch_size, self.min_batch_size, self.batch_size_growth_factor)
+            if not openai_request.openai_input.get("stream") or isinstance(response_generator, ErrorResponse):
+                yield response_generator.model_dump()
+            else:
+                batch = []
+                batch_token_counter = 0
+                batch_size = BatchSize(self.default_batch_size, self.min_batch_size, self.batch_size_growth_factor)
 
-            async for chunk_str in response_generator:
-                if "data" in chunk_str:
-                    if self.raw_openai_output:
-                        data = chunk_str
-                    elif "[DONE]" in chunk_str:
-                        continue
-                    else:
-                        data = json.loads(chunk_str.removeprefix("data: ").rstrip("\n\n")) if not self.raw_openai_output else chunk_str
-                    batch.append(data)
-                    batch_token_counter += 1
-                    if batch_token_counter >= batch_size.current_batch_size:
+                async for chunk_str in response_generator:
+                    if "data" in chunk_str:
                         if self.raw_openai_output:
-                            batch = "".join(batch)
-                        yield batch
-                        batch = []
-                        batch_token_counter = 0
-                        batch_size.update()
-            if batch:
-                if self.raw_openai_output:
-                    batch = "".join(batch)
-                yield batch
+                            data = chunk_str
+                        elif "[DONE]" in chunk_str:
+                            continue
+                        else:
+                            data = json.loads(chunk_str.removeprefix("data: ").rstrip("\n\n")) if not self.raw_openai_output else chunk_str
+                        batch.append(data)
+                        batch_token_counter += 1
+                        if batch_token_counter >= batch_size.current_batch_size:
+                            if self.raw_openai_output:
+                                batch = "".join(batch)
+                            yield batch
+                            batch = []
+                            batch_token_counter = 0
+                            batch_size.update()
+                if batch:
+                    if self.raw_openai_output:
+                        batch = "".join(batch)
+                    yield batch

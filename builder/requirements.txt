@@ -2,6 +2,7 @@ ray
 pandas
 pyarrow
 runpod
+sentry-sdk>=2.35.0
 huggingface-hub
 packaging
 typing-extensions>=4.8.0

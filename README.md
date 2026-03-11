@@ -118,6 +118,23 @@ pip install pytest
 pytest tests/ -v
 ```
 
+## Sentry Observability
+
+Sentry is now baked into the image and stays dormant until `SENTRY_DSN` is set at runtime.
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `SENTRY_DSN` | Enables Sentry for the worker | disabled |
+| `SENTRY_ENVIRONMENT` | Environment label in Sentry | `production` |
+| `SENTRY_RELEASE` | Release/version grouping | unset |
+| `SENTRY_TRACES_SAMPLE_RATE` | Transaction sampling for request traces | unset |
+| `SENTRY_PROFILES_SAMPLE_RATE` | Transaction-based profiling sample rate | unset |
+| `SENTRY_PROFILE_SESSION_SAMPLE_RATE` | Continuous profiling sample rate | unset |
+| `SENTRY_ENABLE_LOGS` | Sends Python logs to Sentry Logs | `true` |
+| `SENTRY_ASYNCIO_TASK_SPANS` | Enables per-task asyncio spans | `false` |
+
+The worker sends startup failures, inference failures, logs, and request timing to Sentry. Prompt bodies and Python local variables stay out of Sentry by default, which keeps model inputs from being shipped unless you explicitly relax those settings.
+
 ## When to re-sync with upstream
 
 Once vLLM stable includes the Qwen3.5 architectures in its model registry (likely v0.17.0+), you can switch back to the upstream `runpod/worker-v1-vllm` image and retire this fork.
