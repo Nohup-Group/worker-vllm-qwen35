@@ -55,6 +55,7 @@ DEFAULT_ARGS = {
     "num_lookahead_slots": 0,
     "scheduler_delay_factor": 0.0,
     "guided_decoding_backend": "guidance",
+    "language_model_only": True,
     "spec_decoding_acceptance_method": "rejection_sampler",
     "stream_interval": 1,
 }
