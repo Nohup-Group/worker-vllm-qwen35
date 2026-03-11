@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -229,7 +230,7 @@ class OpenAIvLLMEngine(vLLMEngine):
         if self.tokenizer and hasattr(self.tokenizer, 'tokenizer'):
             chat_template = self.tokenizer.tokenizer.chat_template
 
-        self.chat_engine = OpenAIServingChat(
+        chat_kwargs = dict(
             engine_client=self.llm,
             models=self.serving_models,
             response_role=self.response_role,
@@ -245,17 +246,22 @@ class OpenAIvLLMEngine(vLLMEngine):
             enable_prompt_tokens_details=os.getenv('ENABLE_PROMPT_TOKENS_DETAILS', 'false').lower() == 'true',
             enable_force_include_usage=os.getenv('ENABLE_FORCE_INCLUDE_USAGE', 'false').lower() == 'true',
             enable_log_outputs=os.getenv('ENABLE_LOG_OUTPUTS', 'false').lower() == 'true',
-            log_error_stack=os.getenv('LOG_ERROR_STACK', 'false').lower() == 'true',
         )
-        self.completion_engine = OpenAIServingCompletion(
+        # log_error_stack was added in newer vLLM versions; skip if unsupported
+        if 'log_error_stack' in inspect.signature(OpenAIServingChat.__init__).parameters:
+            chat_kwargs['log_error_stack'] = os.getenv('LOG_ERROR_STACK', 'false').lower() == 'true'
+        self.chat_engine = OpenAIServingChat(**chat_kwargs)
+        completion_kwargs = dict(
             engine_client=self.llm,
             models=self.serving_models,
             request_logger=None,
             return_tokens_as_token_ids=os.getenv('RETURN_TOKENS_AS_TOKEN_IDS', 'false').lower() == 'true',
             enable_prompt_tokens_details=os.getenv('ENABLE_PROMPT_TOKENS_DETAILS', 'false').lower() == 'true',
             enable_force_include_usage=os.getenv('ENABLE_FORCE_INCLUDE_USAGE', 'false').lower() == 'true',
-            log_error_stack=os.getenv('LOG_ERROR_STACK', 'false').lower() == 'true',
         )
+        if 'log_error_stack' in inspect.signature(OpenAIServingCompletion.__init__).parameters:
+            completion_kwargs['log_error_stack'] = os.getenv('LOG_ERROR_STACK', 'false').lower() == 'true'
+        self.completion_engine = OpenAIServingCompletion(**completion_kwargs)
 
         if hasattr(self.chat_engine, 'warmup'):
             await self.chat_engine.warmup()

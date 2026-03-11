@@ -331,8 +331,13 @@ def get_engine_args():
                 revision=args.get("revision"),
             )
         if max_model_len is not None:
-            args["max_num_batched_tokens"] = max_model_len
-            logging.info(f"Setting max_num_batched_tokens to {max_model_len}")
+            # Cap at 16384 to avoid consuming all GPU memory during profiling.
+            # max_num_batched_tokens controls prefill activation memory, not
+            # the context window.  max_model_len still governs the maximum
+            # sequence length a single request can use.
+            capped = min(max_model_len, 16384)
+            args["max_num_batched_tokens"] = capped
+            logging.info(f"Setting max_num_batched_tokens to {capped} (max_model_len={max_model_len})")
 
     if os.getenv('VLLM_ATTENTION_BACKEND'):
         logging.warning(
